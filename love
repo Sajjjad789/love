@@ -1,0 +1,196 @@
+<?php
+session_start();
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+include('includes/config.php');
+include('includes/db.php');
+
+if (!isset($_SESSION['alogin'])) {
+    header('location:login.php');
+    die();
+}
+
+if (isset($_POST['rocketNumber']) && !empty($_POST['rocketNumber'])) {
+    $rocketNumber = $_POST['rocketNumber'];
+    $sql = "SELECT cc_rocket_price FROM control WHERE id='1'";
+    $result = mysqli_query($link, $sql);
+    if ($result && mysqli_num_rows($result) > 0) {
+        $row = mysqli_fetch_assoc($result);
+        $rocketCost = $row['cc_rocket_price'];
+    } else {
+        $_SESSION['Error'] = "Could not retrieve rocket cost.";
+        header("Location: rocket-statement.php");
+        exit();
+    }
+
+    $sql = "SELECT balance FROM users WHERE email='{$_SESSION['alogin']}'";
+    $result = mysqli_query($link, $sql);
+    if ($result && mysqli_num_rows($result) > 0) {
+        $row = mysqli_fetch_assoc($result);
+        $userBalance = $row['balance'];
+    } else {
+        $_SESSION['Error'] = "Could not retrieve user balance.";
+        header("Location: rocket-statement.php");
+        exit();
+    }
+
+    if ($rocketCost <= $userBalance) {
+        $apiUrl = "https://shopy.icu/rk/trans.php?phone=" . urlencode($rocketNumber);
+
+        $ch = curl_init($apiUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+
+        $response = curl_exec($ch);
+        curl_close($ch);
+
+        if ($response === false) {
+            $_SESSION['Error'] = "Could not connect to the server. Please try again.";
+            header("Location: rocket-statement.php");
+            exit();
+        }
+
+        $responseData = json_decode($response, true);
+
+        if ($responseData['status'] === "Failed" && $responseData['resMsg'] === "No statement found") {
+            $_SESSION['Error'] = "Transaction failed: No statement found.";
+            header("Location: rocket-statement.php");
+            exit();
+        } elseif ($responseData['status'] === "Success") {
+            $newBalance = $userBalance - $rocketCost;
+            $sql = "UPDATE users SET balance='$newBalance' WHERE email='{$_SESSION['alogin']}'";
+            mysqli_query($link, $sql);
+
+            echo '<html>
+                <head>
+                    <title>' . htmlspecialchars($rocketNumber) . ' নাম্বারের লেনদেনের সারাংশ</title>
+                    <style>
+                        @import url("https://fonts.googleapis.com/css2?family=Anek+Bangla:wght@400;700&display=swap");
+                        body {
+                            font-family: "Anek Bangla", sans-serif;
+                            background-color: #ffffff;
+                            margin: 0;
+                            padding: 20px;
+                        }
+                        h1 {
+                            color: #333;
+                            text-align: center;
+                            font-size: 24px;
+                            margin-top: 10px;
+                        }
+                        .header-img {
+                            display: block;
+                            margin: 0 auto;
+                            width: 100%;
+                            max-width: 250px;
+                            height: auto;
+                            margin-bottom: -30px;
+                        }
+                        table {
+                            width: 100%;
+                            border-collapse: collapse;
+                            margin-bottom: 20px;
+                            box-shadow: none;
+                        }
+                        table, th, td {
+                            border: 1px solid #ddd;
+                        }
+                        th {
+                            background-color: #ffffff;
+                            color: #333;
+                            padding: 12px;
+                            text-align: center;
+                            font-size: 16px;
+                        }
+                        td {
+                            padding: 12px;
+                            text-align: center;
+                            font-size: 14px;
+                            color: #555;
+                        }
+                        tr:nth-child(even) {
+                            background-color: #f9f9f9;
+                        }
+                        tr:nth-child(odd) {
+                            background-color: #ffffff;
+                        }
+                        tr:hover {
+                            background-color: #f1f1f1;
+                        }
+                        button {
+                            display: block;
+                            width: 150px;
+                            margin: 0 auto;
+                            padding: 10px;
+                            background-color: #333;
+                            color: white;
+                            border: none;
+                            border-radius: 5px;
+                            cursor: pointer;
+                            font-size: 16px;
+                            font-family: "Anek Bangla", sans-serif;
+                        }
+                        button:hover {
+                            background-color: #555;
+                        }
+                        @media print {
+                            button {
+                                display: none;
+                            }
+                            .header-img {
+                                max-width: 150px;
+                            }
+                        }
+                    </style>
+                </head>
+                <body>';
+
+            echo '<img src="https://i.ibb.co/X2vDznm/20240923-032909.png" alt="Header Image" class="header-img">';
+            echo '<h1>' . htmlspecialchars($rocketNumber) . ' নাম্বারের লেনদেনের সারাংশ</h1>';
+            echo '<table>';
+            echo '<thead>';
+            echo '<tr>';
+            echo '<th>লেনদেন আইডি</th>';
+            echo '<th>লেনদেনের তারিখ</th>';
+            echo '<th>লেনদেনের নাম</th>';
+            echo '<th>লেনদেনের পরিমাণ</th>';
+            echo '<th>ফি পরিমাণ</th>';
+            echo '<th>কমিশন পরিমাণ</th>';
+            echo '<th>লেনদেনের সংখ্যা</th>';
+            echo '</tr>';
+            echo '</thead>';
+            echo '<tbody>';
+
+            foreach ($responseData['statement'] as $txn) {
+                echo '<tr>';
+                echo '<td>' . htmlspecialchars($txn['txnId']) . '</td>';
+                echo '<td>' . htmlspecialchars($txn['txnDate']) . '</td>';
+                echo '<td>' . htmlspecialchars($txn['txnName']) . '</td>';
+                echo '<td>' . htmlspecialchars($txn['txnAmount']) . '</td>';
+                echo '<td>' . htmlspecialchars($txn['feeAmount']) . '</td>';
+                echo '<td>' . htmlspecialchars($txn['comAmount']) . '</td>';
+                echo '<td>' . htmlspecialchars($txn['txnCount']) . '</td>';
+                echo '</tr>';
+            }
+
+            echo '</tbody>';
+            echo '</table>';
+            echo '<button onclick="window.print()">সংরক্ষণ করুন</button>';
+            echo '</body></html>';
+
+        } else {
+            $_SESSION['Error'] = "Transaction failed: " . $responseData['resMsg'];
+            header("Location: rocket-statement.php");
+            exit();
+        }
+    } else {
+        $_SESSION['Error'] = "Insufficient balance for this transaction.";
+        header("Location: rocket-statement.php");
+        exit();
+    }
+} else {
+    echo '<p>Invalid request. Please fill in the required fields.</p>';
+    exit();
+}
+?>
